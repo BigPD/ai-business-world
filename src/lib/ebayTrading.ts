@@ -57,6 +57,8 @@ export type SellerListItem = {
   hitCount?: number;
   startTime?: string;
   endTime?: string;
+  listingUrl?: string;
+  imageUrl?: string;
 };
 
 function toArray<T>(value: T | T[] | undefined): T[] {
@@ -121,6 +123,8 @@ export async function fetchAllActiveListings(): Promise<SellerListItem[]> {
         hitCount: num(item.HitCount),
         startTime: text(item.ListingDetails?.StartTime),
         endTime: text(item.ListingDetails?.EndTime),
+        listingUrl: text(item.ListingDetails?.ViewItemURL),
+        imageUrl: text(item.PictureDetails?.GalleryURL),
       });
     }
 

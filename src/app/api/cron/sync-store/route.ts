@@ -32,6 +32,8 @@ async function syncListings() {
         listing_format: item.listingType,
         listing_status: "active",
         watch_count: item.watchCount,
+        listing_url: item.listingUrl,
+        image_url: item.imageUrl,
         hit_count: item.hitCount,
         listed_at: item.startTime,
         ends_at: item.endTime,
