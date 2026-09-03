@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/sync-store", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/trend-scan", "schedule": "30 3 * * *" }
+    { "path": "/api/cron/store-sales-metrics", "schedule": "15 3 * * *" },
+    { "path": "/api/cron/research-scan", "schedule": "30 3 * * *" }
   ]
 }

@@ -288,6 +288,13 @@ async function getOrCreateMerchantLocation() {
   return key;
 }
 
+// Full item detail (brand/MPN/aspects) for a small number of top candidates
+// per keyword — the search endpoint's summary objects don't carry these, and
+// fetching detail for every result would blow the API-call and time budget.
+export async function getItemDetail(itemId: string) {
+  return ebayApiFetch(`/buy/browse/v1/item/${encodeURIComponent(itemId)}`, { asUser: false });
+}
+
 let cachedCategoryTreeId: string | null = null;
 
 async function getCategoryTreeId() {

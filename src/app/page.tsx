@@ -17,7 +17,7 @@ type Listing = {
 
 async function getData() {
   const db = supabaseAdmin();
-  const [tokenRes, allListingsRes, ordersAllRes, draftsRes, trendRes, recentOrdersRes] = await Promise.all([
+  const [tokenRes, allListingsRes, ordersAllRes, draftsRes, recentOrdersRes] = await Promise.all([
     db.from("ebay_tokens").select("environment, updated_at, refresh_token_expires_at"),
     db
       .from("store_listings")
@@ -31,11 +31,6 @@ async function getData() {
       .in("status", ["draft", "approved", "published"])
       .order("created_at", { ascending: false })
       .limit(15),
-    db
-      .from("trend_snapshots")
-      .select("keyword, opportunity_score, avg_sold_price, active_listing_count, scan_date")
-      .order("opportunity_score", { ascending: false })
-      .limit(8),
     db
       .from("store_orders")
       .select("ebay_order_id, buyer_username, order_total, currency, order_status, placed_at")
@@ -77,7 +72,6 @@ async function getData() {
     draftOpportunities: draftsRes.data?.filter((d) => d.status === "draft").length ?? 0,
     revenue30d,
     currency,
-    topTrends: trendRes.data ?? [],
     topListings,
     recentOrders: recentOrdersRes.data ?? [],
     recommendations: flagged.slice(0, 10),
@@ -89,10 +83,6 @@ function money(value: number | string | null | undefined, currency = "AUD") {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   return new Intl.NumberFormat("en-AU", { style: "currency", currency }).format(n);
-}
-
-function ebaySearchUrl(keyword: string) {
-  return `https://www.ebay.com.au/sch/i.html?_nkw=${encodeURIComponent(keyword)}`;
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {
@@ -167,6 +157,11 @@ export default async function Home({ searchParams }: { searchParams: { connected
         .disclaimer { color: #6b7382; font-size: 11.5px; margin-top: 10px; }
       `}</style>
 
+      <nav style={{ display: "flex", gap: 16, fontSize: 13, marginBottom: 16 }}>
+        <a href="/" className="link">Overview</a>
+        <a href="/research" className="link">Product Research</a>
+        <a href="/health" className="link">API &amp; Data Health</a>
+      </nav>
       <div className="header-row">
         <div>
           <h1 className="title">JDM Kingdom — eBay Control Center</h1>
@@ -429,40 +424,16 @@ export default async function Home({ searchParams }: { searchParams: { connected
 
       <section>
         <div className="section-head">
-          <h2 className="section-title">Top trend opportunities</h2>
-          <span className="section-note">Click a keyword to see it live on eBay</span>
+          <h2 className="section-title">Product research</h2>
         </div>
         <div className="card-table">
-          {data.topTrends.length === 0 ? (
-            <div className="empty">No trend scans recorded yet. The daily cron job populates this.</div>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Keyword</th>
-                  <th>Avg price</th>
-                  <th>Active listings</th>
-                  <th>Opportunity score</th>
-                  <th>Scanned</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.topTrends.map((t, i) => (
-                  <tr key={i}>
-                    <td>
-                      <a href={ebaySearchUrl(t.keyword)} target="_blank" rel="noreferrer" className="link">
-                        {t.keyword}
-                      </a>
-                    </td>
-                    <td>{t.avg_sold_price ? money(t.avg_sold_price) : "—"}</td>
-                    <td>{t.active_listing_count ?? "—"}</td>
-                    <td>{t.opportunity_score ?? "—"}</td>
-                    <td className="muted">{t.scan_date}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <div className="empty">
+            The keyword-based &quot;trend opportunities&quot; table has been replaced — it couldn&apos;t distinguish a
+            specific product from a raw search term, or real sales from active listings. Product Research now
+            separates <strong>Verified Sales</strong> (real transaction evidence — currently your own store only) from{" "}
+            <strong>Market Signal</strong> (competition/pricing data, explicitly never shown as proof of sales).{" "}
+            <a href="/research" className="link">Open Product Research →</a>
+          </div>
         </div>
       </section>
     </main>
