@@ -26,7 +26,7 @@ async function getData() {
     db
       .from("listing_opportunities")
       .select(
-        "id, suggested_title, suggested_category_id, suggested_category_name, suggested_price, rationale, status, created_at, publish_error, ebay_item_id"
+        "id, suggested_title, suggested_description, suggested_category_id, suggested_category_name, suggested_price, rationale, status, created_at, publish_error, ebay_item_id"
       )
       .in("status", ["draft", "approved", "published"])
       .order("created_at", { ascending: false })
@@ -157,9 +157,13 @@ export default async function Home({ searchParams }: { searchParams: { connected
         .btn { border: none; border-radius: 8px; padding: 6px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
         .btn-approve { background: #1f7a41; color: #d5ffe4; }
         .btn-reject { background: #3a1414; color: #ffd5d5; }
-        .publish-form { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-        .input { background: #0d0f14; border: 1px solid #2a303c; color: #e8eaed; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
-        .input-narrow { width: 90px; }
+        .publish-form { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; background: #0d0f14; border: 1px solid #232833; border-radius: 10px; padding: 14px; }
+        .publish-note { color: #fbbf24; font-size: 12px; }
+        .field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: #8891a0; }
+        .field-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        .input { background: #12151c; border: 1px solid #2a303c; color: #e8eaed; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; font-family: inherit; }
+        .input-narrow { width: 120px; }
+        .input-wide { width: 100%; max-width: 480px; }
         .disclaimer { color: #6b7382; font-size: 11.5px; margin-top: 10px; }
       `}</style>
 
@@ -280,15 +284,49 @@ export default async function Home({ searchParams }: { searchParams: { connected
 
                   {d.status === "approved" && (
                     <form action={`/api/opportunities/${d.id}/publish`} method="post" className="publish-form">
-                      <input name="image_url" placeholder="Real product photo URL (https://...)" className="input" required />
-                      <input name="quantity" type="number" min={1} defaultValue={1} className="input input-narrow" />
-                      <select name="condition" className="input input-narrow" defaultValue="NEW">
-                        <option value="NEW">New</option>
-                        <option value="USED_EXCELLENT">Used — Excellent</option>
-                        <option value="USED_GOOD">Used — Good</option>
-                        <option value="USED_ACCEPTABLE">Used — Acceptable</option>
-                        <option value="FOR_PARTS_OR_NOT_WORKING">For parts / not working</option>
-                      </select>
+                      <div className="publish-note">
+                        This is a market signal, not a sourced product — fill in the real item you're actually listing.
+                      </div>
+                      <label className="field">
+                        <span>Real product title</span>
+                        <input name="title" defaultValue={d.suggested_title} className="input input-wide" required minLength={5} />
+                      </label>
+                      <label className="field">
+                        <span>Description</span>
+                        <textarea name="description" defaultValue={d.suggested_description ?? ""} className="input input-wide" rows={2} />
+                      </label>
+                      <label className="field">
+                        <span>eBay category ID</span>
+                        <input name="category_id" defaultValue={d.suggested_category_id ?? ""} className="input input-narrow" required />
+                      </label>
+                      <div className="field-row">
+                        <label className="field">
+                          <span>Your cost ($)</span>
+                          <input name="cost" type="number" step="0.01" min={0} placeholder="what you pay" className="input input-narrow" />
+                        </label>
+                        <label className="field">
+                          <span>Sell price ($)</span>
+                          <input name="price" type="number" step="0.01" min={0.01} defaultValue={d.suggested_price ?? ""} className="input input-narrow" required />
+                        </label>
+                        <label className="field">
+                          <span>Quantity</span>
+                          <input name="quantity" type="number" min={1} defaultValue={1} className="input input-narrow" />
+                        </label>
+                        <label className="field">
+                          <span>Condition</span>
+                          <select name="condition" className="input input-narrow" defaultValue="NEW">
+                            <option value="NEW">New</option>
+                            <option value="USED_EXCELLENT">Used — Excellent</option>
+                            <option value="USED_GOOD">Used — Good</option>
+                            <option value="USED_ACCEPTABLE">Used — Acceptable</option>
+                            <option value="FOR_PARTS_OR_NOT_WORKING">For parts / not working</option>
+                          </select>
+                        </label>
+                      </div>
+                      <label className="field">
+                        <span>Real product photo URL</span>
+                        <input name="image_url" type="url" placeholder="https://..." className="input input-wide" required />
+                      </label>
                       <button type="submit" className="btn btn-approve">Publish to eBay</button>
                     </form>
                   )}
