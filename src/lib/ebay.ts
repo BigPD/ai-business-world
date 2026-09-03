@@ -187,6 +187,107 @@ export async function ebayApiFetch(
   return res.json();
 }
 
+// Every published listing must reference an existing shipping/payment/
+// return policy on the seller's account — fetch the seller's default ones
+// so new listings inherit whatever they already use.
+export async function getDefaultBusinessPolicies() {
+  const [fulfillment, payment, returns] = await Promise.all([
+    ebayApiFetch("/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_AU"),
+    ebayApiFetch("/sell/account/v1/payment_policy?marketplace_id=EBAY_AU"),
+    ebayApiFetch("/sell/account/v1/return_policy?marketplace_id=EBAY_AU"),
+  ]);
+  const fulfillmentPolicyId = fulfillment.fulfillmentPolicies?.[0]?.fulfillmentPolicyId;
+  const paymentPolicyId = payment.paymentPolicies?.[0]?.paymentPolicyId;
+  const returnPolicyId = returns.returnPolicies?.[0]?.returnPolicyId;
+  if (!fulfillmentPolicyId || !paymentPolicyId || !returnPolicyId) {
+    throw new Error(
+      "No default shipping/payment/return policy found on this eBay account — set these up in Seller Hub first."
+    );
+  }
+  return { fulfillmentPolicyId, paymentPolicyId, returnPolicyId };
+}
+
+// Publishes a draft as a real, live eBay listing via the Inventory API
+// (create item -> create offer -> publish offer). Requires the seller's
+// merchant location key to exist already (created once via Account API if
+// missing).
+export async function publishListing(params: {
+  sku: string;
+  title: string;
+  description: string;
+  imageUrls: string[];
+  quantity: number;
+  condition: string;
+  categoryId: string;
+  price: number;
+  currency: string;
+}) {
+  const { sku, title, description, imageUrls, quantity, condition, categoryId, price, currency } = params;
+
+  await ebayApiFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      availability: { shipToLocationAvailability: { quantity } },
+      condition,
+      product: { title, description, imageUrls },
+    }),
+  });
+
+  const policies = await getDefaultBusinessPolicies();
+
+  const merchantLocationKey = await getOrCreateMerchantLocation();
+
+  const offerRes = await ebayApiFetch("/sell/inventory/v1/offer", {
+    method: "POST",
+    body: JSON.stringify({
+      sku,
+      marketplaceId: "EBAY_AU",
+      format: "FIXED_PRICE",
+      availableQuantity: quantity,
+      categoryId,
+      listingDescription: description,
+      merchantLocationKey,
+      pricingSummary: { price: { value: price.toFixed(2), currency } },
+      listingPolicies: {
+        fulfillmentPolicyId: policies.fulfillmentPolicyId,
+        paymentPolicyId: policies.paymentPolicyId,
+        returnPolicyId: policies.returnPolicyId,
+      },
+    }),
+  });
+  const offerId = offerRes.offerId as string;
+
+  const publishRes = await ebayApiFetch(`/sell/inventory/v1/offer/${offerId}/publish/`, {
+    method: "POST",
+  });
+
+  return { listingId: publishRes.listingId as string, offerId };
+}
+
+let cachedMerchantLocationKey: string | null = null;
+
+async function getOrCreateMerchantLocation() {
+  if (cachedMerchantLocationKey) return cachedMerchantLocationKey;
+  const list = await ebayApiFetch("/sell/inventory/v1/location?limit=1");
+  const existing = list.locations?.[0]?.merchantLocationKey;
+  if (existing) {
+    cachedMerchantLocationKey = existing;
+    return existing;
+  }
+  const key = "jdm-kingdom-default";
+  await ebayApiFetch(`/sell/inventory/v1/location/${key}`, {
+    method: "POST",
+    body: JSON.stringify({
+      location: { address: { country: "AU" } },
+      locationTypes: ["WAREHOUSE"],
+      merchantLocationStatus: "ENABLED",
+      name: "JDM Kingdom",
+    }),
+  });
+  cachedMerchantLocationKey = key;
+  return key;
+}
+
 let cachedCategoryTreeId: string | null = null;
 
 async function getCategoryTreeId() {

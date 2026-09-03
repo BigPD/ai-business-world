@@ -25,10 +25,12 @@ async function getData() {
     db.from("store_orders").select("order_total, currency"),
     db
       .from("listing_opportunities")
-      .select("id, suggested_title, suggested_category_name, suggested_price, rationale, status, created_at")
-      .eq("status", "draft")
+      .select(
+        "id, suggested_title, suggested_category_id, suggested_category_name, suggested_price, rationale, status, created_at, publish_error, ebay_item_id"
+      )
+      .in("status", ["draft", "approved", "published"])
       .order("created_at", { ascending: false })
-      .limit(10),
+      .limit(15),
     db
       .from("trend_snapshots")
       .select("keyword, opportunity_score, avg_sold_price, active_listing_count, scan_date")
@@ -72,7 +74,7 @@ async function getData() {
     connected: (tokenRes.data ?? []).some((t) => !!t.refresh_token_expires_at),
     listingsCount: listings.length,
     ordersCount: orders.length,
-    draftOpportunities: draftsRes.data?.length ?? 0,
+    draftOpportunities: draftsRes.data?.filter((d) => d.status === "draft").length ?? 0,
     revenue30d,
     currency,
     topTrends: trendRes.data ?? [],
@@ -155,6 +157,9 @@ export default async function Home({ searchParams }: { searchParams: { connected
         .btn { border: none; border-radius: 8px; padding: 6px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
         .btn-approve { background: #1f7a41; color: #d5ffe4; }
         .btn-reject { background: #3a1414; color: #ffd5d5; }
+        .publish-form { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .input { background: #0d0f14; border: 1px solid #2a303c; color: #e8eaed; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
+        .input-narrow { width: 90px; }
         .disclaimer { color: #6b7382; font-size: 11.5px; margin-top: 10px; }
       `}</style>
 
@@ -249,25 +254,54 @@ export default async function Home({ searchParams }: { searchParams: { connected
               {data.drafts.map((d) => (
                 <div className="draft-card" key={d.id}>
                   <div className="draft-top">
-                    <div className="draft-title">{d.suggested_title}</div>
+                    <div className="draft-title">
+                      {d.suggested_title}{" "}
+                      {d.status === "published" && <span className="badge" style={{ background: "#1f7a41", color: "#d5ffe4" }}>Published</span>}
+                      {d.status === "approved" && <span className="badge">Approved — ready to publish</span>}
+                    </div>
                     <div>{money(d.suggested_price)}</div>
                   </div>
-                  <div className="draft-meta">Category: {d.suggested_category_name ?? "not matched"}</div>
+                  <div className="draft-meta">Category: {d.suggested_category_name ?? "not matched"}{d.suggested_category_id ? ` (#${d.suggested_category_id})` : ""}</div>
                   <div className="draft-rationale">{d.rationale}</div>
-                  <div className="draft-actions">
-                    <form action={`/api/opportunities/${d.id}`} method="post">
-                      <input type="hidden" name="action" value="approve" />
-                      <button type="submit" className="btn btn-approve">Approve</button>
+                  {d.publish_error && <div className="draft-rationale flag-warn">Publish failed: {d.publish_error}</div>}
+
+                  {d.status === "draft" && (
+                    <div className="draft-actions">
+                      <form action={`/api/opportunities/${d.id}`} method="post">
+                        <input type="hidden" name="action" value="approve" />
+                        <button type="submit" className="btn btn-approve">Approve</button>
+                      </form>
+                      <form action={`/api/opportunities/${d.id}`} method="post">
+                        <input type="hidden" name="action" value="reject" />
+                        <button type="submit" className="btn btn-reject">Reject</button>
+                      </form>
+                    </div>
+                  )}
+
+                  {d.status === "approved" && (
+                    <form action={`/api/opportunities/${d.id}/publish`} method="post" className="publish-form">
+                      <input name="image_url" placeholder="Real product photo URL (https://...)" className="input" required />
+                      <input name="quantity" type="number" min={1} defaultValue={1} className="input input-narrow" />
+                      <select name="condition" className="input input-narrow" defaultValue="NEW">
+                        <option value="NEW">New</option>
+                        <option value="USED_EXCELLENT">Used — Excellent</option>
+                        <option value="USED_GOOD">Used — Good</option>
+                        <option value="USED_ACCEPTABLE">Used — Acceptable</option>
+                        <option value="FOR_PARTS_OR_NOT_WORKING">For parts / not working</option>
+                      </select>
+                      <button type="submit" className="btn btn-approve">Publish to eBay</button>
                     </form>
-                    <form action={`/api/opportunities/${d.id}`} method="post">
-                      <input type="hidden" name="action" value="reject" />
-                      <button type="submit" className="btn btn-reject">Reject</button>
-                    </form>
-                  </div>
+                  )}
+
+                  {d.status === "published" && d.ebay_item_id && (
+                    <a href={`https://www.ebay.com.au/itm/${d.ebay_item_id}`} target="_blank" rel="noreferrer" className="link">
+                      View live listing →
+                    </a>
+                  )}
                 </div>
               ))}
               <div className="disclaimer" style={{ padding: "0 16px 16px" }}>
-                Approving marks an idea reviewed — it does not publish to eBay yet (that step isn't built).
+                Publishing creates a real, live eBay listing under your account — check the details before submitting.
               </div>
             </>
           )}
