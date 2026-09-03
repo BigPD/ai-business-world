@@ -13,7 +13,8 @@ function isAuthorized(req: Request) {
 }
 
 const FORMULA_VERSION = 1;
-const DETAIL_ENRICH_COUNT = 5; // per keyword, to stay within API/time budget
+const DETAIL_ENRICH_COUNT = 3; // per keyword, fetched in parallel
+const TIME_BUDGET_MS = 240_000; // leave a buffer under the 300s function cap
 
 type BrowseItemSummary = {
   itemId: string;
@@ -25,6 +26,20 @@ type BrowseItemSummary = {
   itemWebUrl?: string;
   image?: { imageUrl?: string };
 };
+
+async function enrichItem(item: SearchResultItem) {
+  try {
+    const detail = await getItemDetail(item.itemId);
+    const aspects: Record<string, string[]> = detail.localizedAspects
+      ? Object.fromEntries(detail.localizedAspects.map((a: { name: string; value: string }) => [a.name, [a.value]]))
+      : {};
+    item.brand = detail.brand ?? aspects["Brand"]?.[0] ?? null;
+    item.mpn = detail.mpn ?? aspects["Manufacturer Part Number"]?.[0] ?? aspects["MPN"]?.[0] ?? null;
+    item.gtin = detail.gtin ?? null;
+  } catch {
+    // non-fatal — this item just stays without identifier enrichment
+  }
+}
 
 async function searchKeyword(keyword: string, categoryId: string | null): Promise<SearchResultItem[]> {
   const params = new URLSearchParams({ q: keyword, limit: "50" });
@@ -49,22 +64,12 @@ async function searchKeyword(keyword: string, categoryId: string | null): Promis
     imageUrl: s.image?.imageUrl ?? null,
   }));
 
-  // Enrich only a bounded number of top-ranked results with real detail
-  // (brand/MPN/GTIN) — fetching this for every result would exceed the
-  // API-call and time budget for a 30-keyword scan.
-  for (const item of items.slice(0, DETAIL_ENRICH_COUNT)) {
-    try {
-      const detail = await getItemDetail(item.itemId);
-      const aspects: Record<string, string[]> = detail.localizedAspects
-        ? Object.fromEntries(detail.localizedAspects.map((a: { name: string; value: string }) => [a.name, [a.value]]))
-        : {};
-      item.brand = detail.brand ?? aspects["Brand"]?.[0] ?? null;
-      item.mpn = detail.mpn ?? aspects["Manufacturer Part Number"]?.[0] ?? aspects["MPN"]?.[0] ?? null;
-      item.gtin = detail.gtin ?? null;
-    } catch {
-      // non-fatal — this item just stays without identifier enrichment
-    }
-  }
+  // Enrich only a bounded number of top-ranked results, in parallel, with
+  // real detail (brand/MPN/GTIN) — fetching this for every result
+  // sequentially is what blew the time budget in the first version of
+  // this job (30 keywords x 5 sequential detail calls = killed at the
+  // Vercel maxDuration cap with no error ever recorded).
+  await Promise.all(items.slice(0, DETAIL_ENRICH_COUNT).map(enrichItem));
 
   return items;
 }
@@ -92,11 +97,17 @@ async function findExistingProduct(db: ReturnType<typeof supabaseAdmin>, cluster
 // transparent, revenue-free Market Signal score. Never writes
 // monthly_units/monthly_revenue here — that would require sold-transaction
 // data this app doesn't have access to (see the capability audit).
+//
+// Stops processing further keywords once TIME_BUDGET_MS elapses and
+// finalizes the run as completed (partial) rather than risk running past
+// the function's maxDuration and getting killed silently — the next
+// scheduled run picks up where coverage left off.
 export async function GET(req: Request) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const startedAt = Date.now();
   const db = supabaseAdmin();
   const { data: run } = await db.from("research_runs").insert({ run_type: "market_signal_scan" }).select().single();
 
@@ -106,9 +117,16 @@ export async function GET(req: Request) {
 
     let scanned = 0;
     let found = 0;
-    const results: { keyword: string; clusters: number; ok: boolean; error?: string }[] = [];
+    let timeBudgetExceeded = false;
+    const results: { keyword: string; clusters: number; ok: boolean; error?: string; skipped?: boolean }[] = [];
 
     for (const kw of keywords ?? []) {
+      if (Date.now() - startedAt > TIME_BUDGET_MS) {
+        timeBudgetExceeded = true;
+        results.push({ keyword: kw.keyword, clusters: 0, ok: true, skipped: true });
+        continue;
+      }
+
       try {
         const items = await searchKeyword(kw.keyword, kw.category_id);
         scanned += items.length;
@@ -197,10 +215,24 @@ export async function GET(req: Request) {
 
     await db
       .from("research_runs")
-      .update({ status: "completed", completed_at: new Date().toISOString(), products_scanned: scanned, products_found: found })
+      .update({
+        status: "completed",
+        completed_at: new Date().toISOString(),
+        products_scanned: scanned,
+        products_found: found,
+        error: timeBudgetExceeded ? "Partial run — time budget reached, remaining keywords skipped this run." : null,
+      })
       .eq("id", run?.id);
 
-    return NextResponse.json({ ok: true, keywordsScanned: (keywords ?? []).length, itemsScanned: scanned, productsFound: found, results });
+    return NextResponse.json({
+      ok: true,
+      keywordsScanned: (keywords ?? []).length,
+      itemsScanned: scanned,
+      productsFound: found,
+      timeBudgetExceeded,
+      elapsedMs: Date.now() - startedAt,
+      results,
+    });
   } catch (err) {
     await db.from("research_runs").update({ status: "failed", completed_at: new Date().toISOString(), error: String(err) }).eq("id", run?.id);
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
