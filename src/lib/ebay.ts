@@ -186,3 +186,28 @@ export async function ebayApiFetch(
   }
   return res.json();
 }
+
+let cachedCategoryTreeId: string | null = null;
+
+async function getCategoryTreeId() {
+  if (cachedCategoryTreeId) return cachedCategoryTreeId;
+  const data = await ebayApiFetch(
+    "/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_AU",
+    { asUser: false }
+  );
+  cachedCategoryTreeId = data.categoryTreeId as string;
+  return cachedCategoryTreeId;
+}
+
+// Asks eBay's Taxonomy API what category a keyword best fits, so listing
+// drafts get a real category instead of a guess.
+export async function suggestCategory(keyword: string): Promise<{ id: string; name: string } | null> {
+  const treeId = await getCategoryTreeId();
+  const data = await ebayApiFetch(
+    `/commerce/taxonomy/v1/category_tree/${treeId}/get_category_suggestions?q=${encodeURIComponent(keyword)}`,
+    { asUser: false }
+  );
+  const top = data.categorySuggestions?.[0]?.category;
+  if (!top) return null;
+  return { id: top.categoryId, name: top.categoryName };
+}
