@@ -128,6 +128,7 @@ export default async function ResearchPage({ searchParams }: { searchParams: Rec
       <p className="subtitle">Verified Sales (real transaction evidence) vs. Market Signal (competition/pricing only — never treated as proof of sales).</p>
       <nav className="tabs">
         <a href="/">← Store dashboard</a>
+        <a href="/saved">Saved Opportunities</a>
         <a href="/health">API &amp; Data Health</a>
       </nav>
 

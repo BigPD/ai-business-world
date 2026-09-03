@@ -207,34 +207,53 @@ export async function getDefaultBusinessPolicies() {
   return { fulfillmentPolicyId, paymentPolicyId, returnPolicyId };
 }
 
-// Publishes a draft as a real, live eBay listing via the Inventory API
-// (create item -> create offer -> publish offer). Requires the seller's
-// merchant location key to exist already (created once via Account API if
-// missing).
-export async function publishListing(params: {
+export type EbayOfferParams = {
   sku: string;
   title: string;
+  subtitle?: string;
   description: string;
   imageUrls: string[];
   quantity: number;
   condition: string;
+  conditionDescription?: string;
   categoryId: string;
   price: number;
   currency: string;
-}) {
-  const { sku, title, description, imageUrls, quantity, condition, categoryId, price, currency } = params;
+  aspects?: Record<string, string[]>;
+  bestOfferEnabled?: boolean;
+  packageWeightKg?: number | null;
+  packageDimensionsCm?: { length: number; width: number; height: number } | null;
+};
+
+// Creates (or replaces) the inventory item and offer via eBay's Inventory
+// API — this alone does NOT make anything live. The result is an
+// unpublished draft offer, visible in Seller Hub, until publishEbayOffer
+// is called explicitly. Requires the seller's merchant location key to
+// exist already (created once via Account API if missing).
+export async function createEbayOffer(params: EbayOfferParams) {
+  const {
+    sku, title, subtitle, description, imageUrls, quantity, condition, conditionDescription,
+    categoryId, price, currency, aspects, bestOfferEnabled, packageWeightKg, packageDimensionsCm,
+  } = params;
 
   await ebayApiFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
     method: "PUT",
     body: JSON.stringify({
       availability: { shipToLocationAvailability: { quantity } },
       condition,
-      product: { title, description, imageUrls },
+      conditionDescription,
+      product: { title, description, imageUrls, aspects },
+      packageWeightAndSize:
+        packageWeightKg && packageDimensionsCm
+          ? {
+              weight: { value: packageWeightKg, unit: "KILOGRAM" },
+              dimensions: { ...packageDimensionsCm, unit: "CENTIMETER" },
+            }
+          : undefined,
     }),
   });
 
   const policies = await getDefaultBusinessPolicies();
-
   const merchantLocationKey = await getOrCreateMerchantLocation();
 
   const offerRes = await ebayApiFetch("/sell/inventory/v1/offer", {
@@ -246,22 +265,34 @@ export async function publishListing(params: {
       availableQuantity: quantity,
       categoryId,
       listingDescription: description,
+      listingDuration: "GTC",
       merchantLocationKey,
       pricingSummary: { price: { value: price.toFixed(2), currency } },
       listingPolicies: {
         fulfillmentPolicyId: policies.fulfillmentPolicyId,
         paymentPolicyId: policies.paymentPolicyId,
         returnPolicyId: policies.returnPolicyId,
+        bestOfferTerms: { bestOfferEnabled: !!bestOfferEnabled },
       },
     }),
   });
-  const offerId = offerRes.offerId as string;
+  return { offerId: offerRes.offerId as string };
+}
 
-  const publishRes = await ebayApiFetch(`/sell/inventory/v1/offer/${offerId}/publish/`, {
-    method: "POST",
-  });
+// Publishes a previously-created offer, making it a live eBay listing.
+// This is the only function in this file that goes live — call it only
+// after explicit human confirmation.
+export async function publishEbayOffer(offerId: string) {
+  const publishRes = await ebayApiFetch(`/sell/inventory/v1/offer/${offerId}/publish/`, { method: "POST" });
+  return { listingId: publishRes.listingId as string };
+}
 
-  return { listingId: publishRes.listingId as string, offerId };
+// Convenience wrapper used by the older listing_opportunities publish flow
+// (Phase 1): create + publish in one call.
+export async function publishListing(params: EbayOfferParams) {
+  const { offerId } = await createEbayOffer(params);
+  const { listingId } = await publishEbayOffer(offerId);
+  return { listingId, offerId };
 }
 
 let cachedMerchantLocationKey: string | null = null;
@@ -286,6 +317,27 @@ async function getOrCreateMerchantLocation() {
   });
   cachedMerchantLocationKey = key;
   return key;
+}
+
+export type CategoryAspect = { name: string; required: boolean; usage: string; dataType: string; mode: string };
+
+// Real, category-specific required/recommended item specifics from eBay's
+// own taxonomy — used to drive the Listing Studio form instead of guessing
+// which fields a category needs.
+export async function getCategoryAspects(categoryId: string): Promise<CategoryAspect[]> {
+  const treeId = await getCategoryTreeId();
+  const data = await ebayApiFetch(
+    `/commerce/taxonomy/v1/category_tree/${treeId}/get_item_aspects_for_category?category_id=${encodeURIComponent(categoryId)}`,
+    { asUser: false }
+  );
+  const aspects = data.aspects ?? [];
+  return aspects.map((a: any) => ({
+    name: a.localizedAspectName,
+    required: a.aspectConstraint?.aspectRequired === true,
+    usage: a.aspectConstraint?.aspectUsage ?? "OPTIONAL",
+    dataType: a.aspectConstraint?.aspectDataType ?? "STRING",
+    mode: a.aspectConstraint?.itemToAspectCardinality ?? "SINGLE",
+  }));
 }
 
 // Full item detail (brand/MPN/aspects) for a small number of top candidates

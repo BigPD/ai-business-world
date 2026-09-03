@@ -160,6 +160,7 @@ export default async function Home({ searchParams }: { searchParams: { connected
       <nav style={{ display: "flex", gap: 16, fontSize: 13, marginBottom: 16 }}>
         <a href="/" className="link">Overview</a>
         <a href="/research" className="link">Product Research</a>
+        <a href="/saved" className="link">Saved Opportunities</a>
         <a href="/health" className="link">API &amp; Data Health</a>
       </nav>
       <div className="header-row">
